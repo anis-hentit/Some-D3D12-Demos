@@ -67,6 +67,9 @@ void HorzBlurCS(int3 groupThreadID : SV_GroupThreadID, int3 dispatchThreadID : S
 		// cases where we have threads that are out of texture size but their dispatchID.x doesnt have to be >= gBlurRadius (it can be >= but it can also be <gBlurRadius))
 	gCache[groupThreadID.x + gBlurRadius] = gInput[min(dispatchThreadID.xy, gInput.Length.xy-1)];
 
+	// Wait for all threads to finish.
+	GroupMemoryBarrierWithGroupSync();
+
 
 	float4 blurColor = { 0.0f,0.0f,0.0f,0.0f };
 

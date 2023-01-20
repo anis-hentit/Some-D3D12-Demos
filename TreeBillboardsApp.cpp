@@ -304,6 +304,9 @@ void TreeBillboardsApp::Draw(const GameTimer& gt)
     // Reusing the command list reuses memory.
     ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
 
+	
+
+
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
@@ -326,7 +329,7 @@ void TreeBillboardsApp::Draw(const GameTimer& gt)
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
 
-    DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
+		DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
 		
 		mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
 		DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::AlphaTested]);
@@ -340,13 +343,18 @@ void TreeBillboardsApp::Draw(const GameTimer& gt)
 		// the execute functions handles the copy back from the resulting blurmap0 texture to the current backbuffer
 		// i couldv made it here but i wanted it to keep the draw function clean
 		mBlurFilter->Execute(mCommandList.Get(), mComputeRootSignature.Get(), mPSOs["HorzBlurPso"].Get(), mPSOs["VertBlurPso"].Get()
-								,CurrentBackBuffer(),10);
+								,CurrentBackBuffer(),5);
+
+		// Prepare to copy blurred output to the back buffer.
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST));
 
 
+		mCommandList->CopyResource(CurrentBackBuffer(), mBlurFilter->Output());
 
-    // Indicate a state transition on the resource usage.
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+		// Transition to PRESENT state.
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
 
     // Done recording commands.
     ThrowIfFailed(mCommandList->Close());
@@ -679,14 +687,19 @@ void TreeBillboardsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE UavTable;
 	UavTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
 
+	CD3DX12_DESCRIPTOR_RANGE SrvTableEx1;
+	SrvTableEx1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+	CD3DX12_DESCRIPTOR_RANGE UavTableEx1;
+	UavTableEx1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 2);
+
 	// Root parameter can be a table, root descriptor or root constants.
 	CD3DX12_ROOT_PARAMETER ComputeSlotRootParameter[5];
 
 	ComputeSlotRootParameter[0].InitAsConstants(12,0);
 	ComputeSlotRootParameter[1].InitAsDescriptorTable(1,&SrvTable);
 	ComputeSlotRootParameter[2].InitAsDescriptorTable(1, &UavTable);
-	ComputeSlotRootParameter[3].InitAsShaderResourceView(0);
-	ComputeSlotRootParameter[4].InitAsUnorderedAccessView(0);
+	ComputeSlotRootParameter[3].InitAsDescriptorTable(1,&SrvTableEx1);
+	ComputeSlotRootParameter[4].InitAsDescriptorTable(1, &UavTableEx1);
 
 
 	// A root signature is an array of root parameters.
@@ -780,9 +793,10 @@ void TreeBillboardsApp::BuildDescriptorHeaps()
 	
 	// next descriptor
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	GpuhDescriptor.Offset(4, mCbvSrvDescriptorSize);
+	GpuhDescriptor.Offset(5, mCbvSrvDescriptorSize);
 
-	mBlurFilter->BuildDescriptors(hDescriptor, GpuhDescriptor,mCbvSrvUavDescriptorSize);
+	mBlurFilter->BuildDescriptors(CD3DX12_CPU_DESCRIPTOR_HANDLE(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), 5, mCbvSrvUavDescriptorSize),
+								CD3DX12_GPU_DESCRIPTOR_HANDLE(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), 5, mCbvSrvUavDescriptorSize),mCbvSrvUavDescriptorSize);
 
 	hDescriptor.Offset(4, mCbvSrvDescriptorSize);
 	GpuhDescriptor.Offset(4, mCbvSrvDescriptorSize);

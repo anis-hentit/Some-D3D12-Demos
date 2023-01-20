@@ -9,7 +9,7 @@ Ex1::Ex1(ID3D12Device* device, ComPtr<ID3D12GraphicsCommandList> mCommandList, D
 
 void Ex1::BuildResources(ComPtr<ID3D12GraphicsCommandList> mCommandList)
 {
-	int vbByteSize = mVector.size() * sizeof(Data);
+	int vbByteSize = mVector.size() * sizeof(XMFLOAT3);
 
 	mInputStructBuffer = d3dUtil::CreateDefaultBuffer(md3dDevice,
 		mCommandList.Get(), mVector.data(), vbByteSize, BufferUploader);
@@ -18,7 +18,7 @@ void Ex1::BuildResources(ComPtr<ID3D12GraphicsCommandList> mCommandList)
 	ThrowIfFailed(md3dDevice->CreateCommittedResource(
 		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
 		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(sizeof(float)*vbByteSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+		&CD3DX12_RESOURCE_DESC::Buffer(sizeof(float)*mVector.size(), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
 		D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 		nullptr,
 		IID_PPV_ARGS(mOutputStructBuffer.GetAddressOf())));
@@ -27,7 +27,7 @@ void Ex1::BuildResources(ComPtr<ID3D12GraphicsCommandList> mCommandList)
 	ThrowIfFailed(md3dDevice->CreateCommittedResource(
 		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK),
 		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(sizeof(float)*vbByteSize),
+		&CD3DX12_RESOURCE_DESC::Buffer(sizeof(float)*mVector.size()),
 		D3D12_RESOURCE_STATE_COPY_DEST,
 		nullptr,
 		IID_PPV_ARGS(mBufferReadBack.GetAddressOf())));
@@ -51,21 +51,23 @@ void Ex1::BuildDescriptors()
 {
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.Format = DXGI_FORMAT_R32G32B32_FLOAT;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Buffer.NumElements = 64;
 	srvDesc.Buffer.FirstElement = 0;
-	srvDesc.Buffer.StructureByteStride = sizeof(Data);
+	srvDesc.Buffer.StructureByteStride = 0;
+	srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
 
 	md3dDevice->CreateShaderResourceView(mInputStructBuffer.Get(), &srvDesc, mInputStructBufferCpuSrv);
 
 	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-	uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+	uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
 	uavDesc.Buffer.FirstElement = 0;
 	uavDesc.Buffer.NumElements = 64;
-	uavDesc.Buffer.StructureByteStride = sizeof(float);
+	uavDesc.Buffer.StructureByteStride = 0;
 	uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+	uavDesc.Buffer.CounterOffsetInBytes = 0;
 	md3dDevice->CreateUnorderedAccessView(mOutputStructBuffer.Get(), nullptr, &uavDesc, mOutputStructBufferCpuUav);
 }
 
@@ -80,8 +82,8 @@ void Ex1::Execute(ID3D12GraphicsCommandList* cmdList, ID3D12RootSignature* RootS
 
 	cmdList->SetComputeRootSignature(RootSig);
 	cmdList->SetPipelineState(Ex1Pso);
-	cmdList->SetComputeRootShaderResourceView(3,mInputStructBuffer->GetGPUVirtualAddress());
-	cmdList->SetComputeRootUnorderedAccessView(4,mOutputStructBuffer->GetGPUVirtualAddress());
+	cmdList->SetComputeRootDescriptorTable(3,mInputStructBufferGpuSrv);
+	cmdList->SetComputeRootDescriptorTable(4, mOutputStructBufferGpuUav);
 
 	cmdList->Dispatch(2, 1, 1);
 
@@ -90,7 +92,7 @@ void Ex1::Execute(ID3D12GraphicsCommandList* cmdList, ID3D12RootSignature* RootS
 	cmdList->CopyResource(mBufferReadBack.Get(), mOutputStructBuffer.Get());
 
 	
-
+	cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOutputStructBuffer.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 
 }
 
@@ -108,9 +110,8 @@ void Ex1::BuildVectors()
 
 		if (x * x + y * y + z * z < 100)
 		{
-			mVector[i].x = x;
-			mVector[i].y = y;
-			mVector[i].z = z;
+			mVector[i] = { x,y,z };
+			
 		}
 		else
 			--i;

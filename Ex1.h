@@ -33,7 +33,7 @@ public :
 	void OutputFile();
 private:
 	ID3D12Device* md3dDevice = nullptr;
-	std::vector<Data> mVector;
+	std::vector<XMFLOAT3> mVector;
 	
 	DXGI_FORMAT mFormat = DXGI_FORMAT_R32G32B32_FLOAT;
 
