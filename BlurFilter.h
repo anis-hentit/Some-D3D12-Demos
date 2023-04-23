@@ -25,7 +25,7 @@ public:
 private:
 	std::vector<float> CalcGaussWeights(float sigma);
 
-	
+
 	
 private :
 	const int MaxBlurRadius = 5;

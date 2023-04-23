@@ -38,11 +38,11 @@ float BilateralBlurWeight(float range, float bilateralSigma)
 {
 	const float PI = 3.14159265f;
 	float twoSigmaBi2 = 2 * bilateralSigma * bilateralSigma;
-	return rsqrt(2 * PI) * rsqrt(bilateralSigma) * exp((-range * range)/twoSigmaBi2);
+	return rsqrt(2 * PI) * rsqrt(bilateralSigma) * exp((-range * range) / twoSigmaBi2);
 }
 
 
-[numthreads(N,1,1)]
+[numthreads(N, 1, 1)]
 void HorzBlurCS(int3 groupThreadID : SV_GroupThreadID, int3 dispatchThreadID : SV_DispatchThreadID)
 {
 	// Put weights in an array for indexing 
@@ -64,7 +64,7 @@ void HorzBlurCS(int3 groupThreadID : SV_GroupThreadID, int3 dispatchThreadID : S
 		gCache[groupThreadID.x] = gInput[int2(x, dispatchThreadID.y)];
 	}
 
-	if (groupThreadID.x >= N-gBlurRadius)
+	if (groupThreadID.x >= N - gBlurRadius)
 	{	// clamp out of bound samples that occur at right image border
 		int x = min(dispatchThreadID.x + gBlurRadius, gInput.Length.x - 1);
 		gCache[groupThreadID.x + 2 * gBlurRadius] = gInput[int2(x, dispatchThreadID.y)];
@@ -74,24 +74,24 @@ void HorzBlurCS(int3 groupThreadID : SV_GroupThreadID, int3 dispatchThreadID : S
 	// this statement takes care of the threads that are not gonna load two texels ( so threads between gBlurRadius and N-gBlurRadius). it also
 		// clamps out of bound samples that occur at image borders(DispatchThreadId.x is out of texture),( more precisely the min statement takes care of
 		// cases where we have threads that are out of texture size but their GroupTheadID.x doesnt have to be between gBlurRadius and N-gBlurRadius,
-		// it can be either < gBlurRadius or >= N-gBlurRadius
+        // it can be either < gBlurRadius or >= N-gBlurRadius
 
-	gCache[groupThreadID.x + gBlurRadius] = gInput[min(dispatchThreadID.xy, gInput.Length.xy-1)];
+	gCache[groupThreadID.x + gBlurRadius] = gInput[min(dispatchThreadID.xy, gInput.Length.xy - 1)];
 
 	// Wait for all threads to finish.
 	GroupMemoryBarrierWithGroupSync();
 
-	float normalizer = 0.0f;
+	
 	float4 blurColor = { 0.0f,0.0f,0.0f,0.0f };
 
 	for (int i = -gBlurRadius; i <= gBlurRadius; ++i)
 	{
 		int k = groupThreadID.x + gBlurRadius + i;
-		blurColor += gCache[k] * weights[i + gBlurRadius] * BilateralBlurWeight(gCache[k] - gCache[groupThreadID.x + gBlurRadius], 10.0f);
-		normalizer += weights[i + gBlurRadius] * BilateralBlurWeight(gCache[k] - gCache[groupThreadID.x + gBlurRadius], 10.0f);
+		blurColor += gCache[k] * weights[i + gBlurRadius];
+		
 	}
 
-	blurColor /= normalizer;
+	
 
 	gOutput[dispatchThreadID.xy] = blurColor;
 }
@@ -142,18 +142,18 @@ void VertBlurCS(int3 groupThreadID : SV_GroupThreadID,
 	// Now blur each pixel.
 	//
 
-	float normalizer = 0.0f;
+	
 	float4 blurColor = float4(0, 0, 0, 0);
 
 	for (int i = -gBlurRadius; i <= gBlurRadius; ++i)
 	{
 		int k = groupThreadID.y + gBlurRadius + i;
 
-		blurColor +=  gCache[k] * weights[i + gBlurRadius] * BilateralBlurWeight(gCache[k] - gCache[groupThreadID.y + gBlurRadius], 10.0f);
-		normalizer += weights[i + gBlurRadius] * BilateralBlurWeight(gCache[k] - gCache[groupThreadID.y + gBlurRadius], 10.0f);
+		blurColor += gCache[k] * weights[i + gBlurRadius];
+		
 	}
 
-	blurColor /= normalizer;
+	
 
 	gOutput[dispatchThreadID.xy] = blurColor;
 }

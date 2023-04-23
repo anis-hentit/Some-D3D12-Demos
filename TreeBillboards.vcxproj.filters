@@ -51,6 +51,12 @@
     <ClCompile Include="Ex1.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SobelFilter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RenderTarget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FrameResource.h">
@@ -89,6 +95,12 @@
     <ClInclude Include="Ex1.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="SobelFilter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderTarget.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Shaders\BlurCS.hlsl">
@@ -110,6 +122,15 @@
       <Filter>Shaders</Filter>
     </FxCompile>
     <FxCompile Include="Shaders\Ex1.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\BlurCSGaussOnly.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\Sobel.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\Composite.hlsl">
       <Filter>Shaders</Filter>
     </FxCompile>
   </ItemGroup>

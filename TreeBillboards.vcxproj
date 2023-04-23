@@ -151,6 +151,8 @@
     <ClCompile Include="BlurFilter.cpp" />
     <ClCompile Include="Ex1.cpp" />
     <ClCompile Include="FrameResource.cpp" />
+    <ClCompile Include="RenderTarget.cpp" />
+    <ClCompile Include="SobelFilter.cpp" />
     <ClCompile Include="TreeBillboardsApp.cpp" />
     <ClCompile Include="Waves.cpp" />
   </ItemGroup>
@@ -166,13 +168,21 @@
     <ClInclude Include="BlurFilter.h" />
     <ClInclude Include="Ex1.h" />
     <ClInclude Include="FrameResource.h" />
+    <ClInclude Include="RenderTarget.h" />
+    <ClInclude Include="SobelFilter.h" />
     <ClInclude Include="Waves.h" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Shaders\BlurCS.hlsl">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </FxCompile>
+    <FxCompile Include="Shaders\BlurCSGaussOnly.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </FxCompile>
     <FxCompile Include="Shaders\Circle.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="Shaders\Composite.hlsl">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </FxCompile>
     <FxCompile Include="Shaders\Default.hlsl">
@@ -190,6 +200,9 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </FxCompile>
     <FxCompile Include="Shaders\LightingUtil.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="Shaders\Sobel.hlsl">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </FxCompile>
     <FxCompile Include="Shaders\sphere.hlsl">

@@ -152,7 +152,7 @@ std::vector<float> BlurFilter::CalcGaussWeights(float sigma)
 	{
 		float x = (float)i;
 
-		weights[i + blurRadius] = expf(-x * x / twoSigma2);
+		weights[i + blurRadius] = expf(-x * x / twoSigma2) * (1 / (2 * DirectX::XM_PI * twoSigma2));
 
 		weightSum += weights[i + blurRadius];
 	}

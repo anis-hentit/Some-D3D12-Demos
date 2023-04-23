@@ -10,6 +10,11 @@
 #include "Waves.h"
 #include "BlurFilter.h"
 #include "Ex1.h"
+#include "SobelFilter.h"
+#include "RenderTarget.h"
+#include <combaseapi.h>
+#include <d3d12.h>
+#include <memory>
 
 
 using Microsoft::WRL::ComPtr;
@@ -88,6 +93,7 @@ private:
     virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
     virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
     virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
+    virtual void CreateRtvAndDsvDescriptorHeaps() override;
 
     void OnKeyboardInput(const GameTimer& gt);
 	void UpdateCamera(const GameTimer& gt);
@@ -113,7 +119,7 @@ private:
     void BuildMaterials();
     void BuildRenderItems();
     void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
-
+    void DrawFullScreenQuad(ID3D12GraphicsCommandList* cmdlist);
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
     float GetHillsHeight(float x, float z)const;
@@ -153,6 +159,8 @@ private:
 	std::unique_ptr<Waves> mWaves;
 	std::unique_ptr<BlurFilter> mBlurFilter;
 	std::unique_ptr<Ex1> mEX1;
+    std::unique_ptr<SobelFilter> mSobelFilter;
+    std::unique_ptr<RenderTarget> mOffscreenRT;
 
 
     PassConstants mMainPassCB;
@@ -215,9 +223,21 @@ bool TreeBillboardsApp::Initialize()
     mCbvSrvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
     mWaves = std::make_unique<Waves>(128, 128, 1.0f, 0.03f, 4.0f, 0.2f);
-	mBlurFilter = std::make_unique<BlurFilter>(md3dDevice.Get(),mClientWidth,mClientHeight,mBackBufferFormat);
-	mEX1 = std::make_unique<Ex1>(md3dDevice.Get(),mCommandList);
- 
+
+    mBlurFilter = std::make_unique<BlurFilter>(md3dDevice.Get(),mClientWidth,mClientHeight,mBackBufferFormat);
+
+    mEX1 = std::make_unique<Ex1>(md3dDevice.Get(),mCommandList);
+
+    mSobelFilter = std::make_unique<SobelFilter>(
+        md3dDevice.Get(),
+        mClientWidth,mClientHeight,
+        mBackBufferFormat);
+
+    mOffscreenRT = std::make_unique<RenderTarget>(
+        md3dDevice.Get(),
+        mClientWidth,mClientHeight,
+        mBackBufferFormat);
+
 	LoadTextures();
     BuildRootSignature();
 	BuildDescriptorHeaps();
@@ -264,6 +284,16 @@ void TreeBillboardsApp::OnResize()
 	{
 		mBlurFilter->OnResize(mClientWidth, mClientHeight);
 	}
+
+    if (mSobelFilter != nullptr)
+    {
+        mSobelFilter->OnResize(mClientWidth, mClientHeight);
+    }
+
+    if (mOffscreenRT != nullptr)
+    {
+        mOffscreenRT->OnResize(mClientWidth, mClientHeight);
+    }
 }
 
 void TreeBillboardsApp::Update(const GameTimer& gt)
@@ -313,16 +343,21 @@ void TreeBillboardsApp::Draw(const GameTimer& gt)
     // Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+    // Transition state of off screen text
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
+		D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
     // Clear the back buffer and depth buffer.
-    mCommandList->ClearRenderTargetView(CurrentBackBufferView(), (float*)&mMainPassCB.FogColor, 0, nullptr);
+    mCommandList->ClearRenderTargetView(mOffscreenRT->Rtv(), (float*)&mMainPassCB.FogColor, 0, nullptr);
     mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
     // Specify the buffers we are going to render to.
-    mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
+    mCommandList->OMSetRenderTargets(1, &mOffscreenRT->Rtv(), true, &DepthStencilView());
 
 	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
 	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+
 
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
@@ -334,27 +369,47 @@ void TreeBillboardsApp::Draw(const GameTimer& gt)
 		mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
 		DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::AlphaTested]);
 
-		mCommandList->SetPipelineState(mPSOs["treeSprites"].Get());
-		DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::AlphaTestedTreeSprites]);
+		//mCommandList->SetPipelineState(mPSOs["treeSprites"].Get());
+		//DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::AlphaTestedTreeSprites]);
 
 		mCommandList->SetPipelineState(mPSOs["transparent"].Get());
 		DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Transparent]);
 
-		// the execute functions handles the copy back from the resulting blurmap0 texture to the current backbuffer
-		// i couldv made it here but i wanted it to keep the draw function clean
+
+
 		mBlurFilter->Execute(mCommandList.Get(), mComputeRootSignature.Get(), mPSOs["HorzBlurPso"].Get(), mPSOs["VertBlurPso"].Get()
-								,CurrentBackBuffer(),5);
+								,mOffscreenRT->Resource(),0);
 
 		// Prepare to copy blurred output to the back buffer.
-		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
 			D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST));
 
 
-		mCommandList->CopyResource(CurrentBackBuffer(), mBlurFilter->Output());
+		mCommandList->CopyResource(mOffscreenRT->Resource(), mBlurFilter->Output());
 
-		// Transition to PRESENT state.
-		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
+		// Transition off screen text to generic read state.
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mOffscreenRT->Resource(),
+			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_GENERIC_READ));
+
+        mSobelFilter->Execute(mCommandList.Get(), mComputeRootSignature.Get(),
+		mPSOs["SobelPso"].Get(), mOffscreenRT->Srv());
+
+        //
+        // Switching back to back buffer rendering
+        //
+
+        mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
+        mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+        mCommandList->SetPipelineState(mPSOs["FullScreenQuadPso"].Get());
+        mCommandList->SetGraphicsRootDescriptorTable(4, mOffscreenRT->Srv());
+        mCommandList->SetGraphicsRootDescriptorTable(5, mSobelFilter->OutputSrv());
+        DrawFullScreenQuad(mCommandList.Get());
+
+
+        mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+
 
     // Done recording commands.
     ThrowIfFailed(mCommandList->Close());
@@ -609,7 +664,7 @@ void TreeBillboardsApp::LoadTextures()
 
 	auto fenceTex = std::make_unique<Texture>();
 	fenceTex->Name = "fenceTex";
-	fenceTex->Filename = L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\Textures\\WireFence.dds";
+	fenceTex->Filename = L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\Textures\\WoodCrate01.dds";
 	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
 		mCommandList.Get(), fenceTex->Filename.c_str(),
 		fenceTex->Resource, fenceTex->UploadHeap));
@@ -644,19 +699,25 @@ void TreeBillboardsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE texTable;
 	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
 
+    CD3DX12_DESCRIPTOR_RANGE SobelTable[2];
+    SobelTable[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,6);// for offscreenText in composite.hlsl
+    SobelTable[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,7);// for sobelText in composite.hlsl
     // Root parameter can be a table, root descriptor or root constants.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[6];
 	
 	// Perfomance TIP: Order from most frequent to least frequent.
 	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
     slotRootParameter[1].InitAsConstantBufferView(0);
     slotRootParameter[2].InitAsConstantBufferView(1);
     slotRootParameter[3].InitAsConstantBufferView(2);
+    slotRootParameter[4].InitAsDescriptorTable(1,&SobelTable[0],D3D12_SHADER_VISIBILITY_PIXEL);
+    slotRootParameter[5].InitAsDescriptorTable(1,&SobelTable[1],D3D12_SHADER_VISIBILITY_PIXEL);
+
 
 	auto staticSamplers = GetStaticSamplers();
 
     // A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(6, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -692,18 +753,23 @@ void TreeBillboardsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE UavTableEx1;
 	UavTableEx1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 2);
 
+
+    CD3DX12_DESCRIPTOR_RANGE SobelTableCompute[2];
+    SobelTableCompute[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,5);
+    SobelTableCompute[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV,1,5);
 	// Root parameter can be a table, root descriptor or root constants.
-	CD3DX12_ROOT_PARAMETER ComputeSlotRootParameter[5];
+	CD3DX12_ROOT_PARAMETER ComputeSlotRootParameter[7];
 
 	ComputeSlotRootParameter[0].InitAsConstants(12,0);
 	ComputeSlotRootParameter[1].InitAsDescriptorTable(1,&SrvTable);
 	ComputeSlotRootParameter[2].InitAsDescriptorTable(1, &UavTable);
 	ComputeSlotRootParameter[3].InitAsDescriptorTable(1,&SrvTableEx1);
 	ComputeSlotRootParameter[4].InitAsDescriptorTable(1, &UavTableEx1);
-
+    ComputeSlotRootParameter[5].InitAsDescriptorTable(1,&SobelTableCompute[0]);
+    ComputeSlotRootParameter[6].InitAsDescriptorTable(1,&SobelTableCompute[1]);
 
 	// A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC CompRootSigDesc(5, ComputeSlotRootParameter,0,nullptr,D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+	CD3DX12_ROOT_SIGNATURE_DESC CompRootSigDesc(7, ComputeSlotRootParameter,0,nullptr,D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	// create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
 	ComPtr<ID3DBlob> CSserializedRootSig = nullptr;
@@ -725,13 +791,34 @@ void TreeBillboardsApp::BuildRootSignature()
 
 }
 
+void TreeBillboardsApp::CreateRtvAndDsvDescriptorHeaps()
+{
+    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc;
+    rtvHeapDesc.NumDescriptors = SwapChainBufferCount + 1 ;
+    rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    rtvHeapDesc.NodeMask = 0;
+    ThrowIfFailed(md3dDevice->CreateDescriptorHeap(
+                     &rtvHeapDesc,IID_PPV_ARGS(mRtvHeap.GetAddressOf())));
+
+
+    D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc;
+    dsvHeapDesc.NumDescriptors = 1;
+    dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    dsvHeapDesc.NodeMask = 0;
+    ThrowIfFailed(md3dDevice->CreateDescriptorHeap(
+                      &dsvHeapDesc,IID_PPV_ARGS(mDsvHeap.GetAddressOf())));
+
+}
+
 void TreeBillboardsApp::BuildDescriptorHeaps()
 {
 	//
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 11;
+	srvHeapDesc.NumDescriptors = 14;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -803,7 +890,30 @@ void TreeBillboardsApp::BuildDescriptorHeaps()
 	
 	mEX1->BuildDescriptors(hDescriptor, GpuhDescriptor, mCbvSrvUavDescriptorSize);
 
-	
+    // need 2 offsets before passing handles
+    hDescriptor.Offset(2,mCbvSrvDescriptorSize);
+    GpuhDescriptor.Offset(2,mCbvSrvDescriptorSize);
+
+    mSobelFilter->BuildDescriptors(hDescriptor,GpuhDescriptor,mCbvSrvDescriptorSize);
+
+
+    D3D12_DESCRIPTOR_HEAP_DESC rtvDesc;
+    rtvDesc.NumDescriptors = 1;
+    rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    rtvDesc.NodeMask = 0;
+
+
+    // need 2 offsets before passing handles
+    hDescriptor.Offset(2,mCbvSrvDescriptorSize);
+    GpuhDescriptor.Offset(2,mCbvSrvDescriptorSize);
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(mRtvHeap->GetCPUDescriptorHandleForHeapStart());
+    // need also 2 offset for passing backbuffer views
+    rtvHandle.Offset(2,mRtvDescriptorSize);
+
+    mOffscreenRT->BuildDescriptors(hDescriptor,GpuhDescriptor,rtvHandle);
+
 }
 
 void TreeBillboardsApp::BuildShadersAndInputLayouts()
@@ -840,6 +950,14 @@ void TreeBillboardsApp::BuildShadersAndInputLayouts()
 	mShaders["HorzBlurCS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\BlurCS.hlsl", nullptr, "HorzBlurCS", "cs_5_0");
 	mShaders["VertBlurCS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\BlurCS.hlsl", nullptr, "VertBlurCS", "cs_5_0");
 
+    mShaders["CompositeVS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\Composite.hlsl",nullptr,"VS","vs_5_0");
+    mShaders["CompositePS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\Composite.hlsl",nullptr,"PS","ps_5_0");
+    mShaders["SobelCS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\Sobel.hlsl", nullptr, "SobelCS", "cs_5_0");
+
+	
+	
+	//mShaders["HorzBlurCS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\BlurCSGaussOnly.hlsl", nullptr, "HorzBlurCS", "cs_5_0");
+	//mShaders["VertBlurCS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\BlurCSGaussOnly.hlsl", nullptr, "VertBlurCS", "cs_5_0");
 
 	mShaders["Ex1CS"] = d3dUtil::CompileShader(L"E:\\Desktop\\frank d luna d3d 12 chapters\\d3d12book-master\\my demos\\Chapter 12 The Geometry Shader blur\\TreeBillboards\\Shaders\\Ex1.hlsl", nullptr, "main", "cs_5_0");
 
@@ -857,6 +975,16 @@ void TreeBillboardsApp::BuildShadersAndInputLayouts()
 	};
 }
 
+
+void TreeBillboardsApp::DrawFullScreenQuad(ID3D12GraphicsCommandList* cmdlist)
+{
+   //Null-out IA stage since we build the vertex off the SV_VertexID in the shader.
+	cmdlist->IASetVertexBuffers(0, 1, nullptr);
+	cmdlist->IASetIndexBuffer(nullptr);
+	cmdlist->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	cmdlist->DrawInstanced(6, 1, 0, 0);
+}
 void TreeBillboardsApp::BuildLandGeometry()
 {
     GeometryGenerator geoGen;
@@ -1367,6 +1495,24 @@ void TreeBillboardsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateComputePipelineState(&Ex1PsoDesc, IID_PPV_ARGS(&mPSOs["Ex1Pso"])));
 
+
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC SobelPsoDesc = {};
+    SobelPsoDesc.pRootSignature = mComputeRootSignature.Get();
+    SobelPsoDesc.CS = { reinterpret_cast<BYTE*>(mShaders["SobelCS"]->GetBufferPointer()),
+                                mShaders["SobelCS"]->GetBufferSize()};
+    SobelPsoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+
+    ThrowIfFailed(md3dDevice->CreateComputePipelineState(&SobelPsoDesc, IID_PPV_ARGS(&mPSOs["SobelPso"])));
+
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC FullScreenQuadPsoDesc = opaquePsoDesc;
+    FullScreenQuadPsoDesc.VS = { reinterpret_cast<BYTE*>(mShaders["CompositeVS"]->GetBufferPointer()),
+                                      mShaders["CompositeVS"]->GetBufferSize()};
+    FullScreenQuadPsoDesc.PS = { reinterpret_cast<BYTE*>(mShaders["CompositePS"]->GetBufferPointer()),
+                                      mShaders["CompositePS"]->GetBufferSize()};
+
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&FullScreenQuadPsoDesc, IID_PPV_ARGS(&mPSOs["FullScreenQuadPso"])));
 }
 
 void TreeBillboardsApp::BuildFrameResources()
